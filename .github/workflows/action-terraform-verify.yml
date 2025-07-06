@@ -1,8 +1,10 @@
-name: Validate terraform fmt & syntax
+name: Validate Terraform Pipeline
 
 on:
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -10,15 +12,68 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  # -------------------------------------------------
+  # Job 1: Check Terraform formatting on changed .tf files
+  # -------------------------------------------------
+  fmt:
+    name: Terraform fmt Check
     runs-on: ubuntu-latest
     defaults:
       run:
-        # always fail on any non-zero exit
         shell: bash
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      # List any changed .tf under infrastructure/, store in TF_CHANGED
+      - name: Determine changed Terraform files
+        id: diff
+        run: |
+          TF_CHANGED=$(git diff --name-only \
+            ${{ github.event.pull_request.base.sha }} \
+            ${{ github.event.pull_request.head.sha }} \
+            | grep '^infrastructure/.*\.tf$' || true)
+          echo "TF_CHANGED<<EOF" >> $GITHUB_ENV
+          echo "$TF_CHANGED" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Show files to be checked
+        run: |
+          echo ">>> Terraform files changed:"
+          echo "${{ env.TF_CHANGED }}"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.2.4
+
+      - name: Run terraform fmt -check
+        run: |
+          if [[ -z "${TF_CHANGED// }" ]]; then
+            echo "No Terraform files changed; skipping fmt check."
+            exit 0
+          fi
+
+          echo "🔍 Checking formatting on changed Terraform files..."
+          terraform fmt -check $TF_CHANGED
+
+  # -------------------------------------------------
+  # Job 2: Init & Validate entire Terraform configuration
+  # -------------------------------------------------
+  validate:
+    name: Terraform Init & Validate
+    needs: fmt
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -27,16 +82,10 @@ jobs:
         with:
           terraform_version: 1.2.4
 
-      # 1) Run fmt-check in the infra folder
-      - name: Terraform fmt -check
+      - name: Terraform init
         working-directory: infrastructure
-        run: |
-          # this step will fail if any .tf is badly formatted
-          terraform fmt -check .
+        run: terraform init -backend=false
 
-      # 2) Initialize & validate the full config in infra/
-      - name: Terraform init & validate
+      - name: Terraform validate
         working-directory: infrastructure
-        run: |
-          terraform init -backend=false
-          terraform validate
+        run: terraform validate
