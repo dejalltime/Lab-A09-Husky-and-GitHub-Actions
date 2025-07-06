@@ -1,0 +1,12 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Husky
+/node_modules/
+/.husky/_/
+
+# Node
+npm-debug.log*
