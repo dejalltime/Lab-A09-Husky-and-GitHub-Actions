@@ -13,16 +13,13 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      # 1. Checkout full history so we can diff
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      # 2. Fetch the PR base commit
       - name: Fetch base for diff
         run: git fetch origin ${{ github.event.pull_request.base.sha }}
 
-      # 3. Determine which .tf files changed between base and head
       - name: Determine changed Terraform files
         id: diff
         run: |
@@ -34,26 +31,28 @@ jobs:
           echo "$TF_CHANGED" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      # 4. (Optional) Show which files we’ll check
       - name: Show changed .tf files
         run: |
           echo "Changed Terraform files:"
           echo "${{ env.TF_CHANGED }}"
 
-      # 5. Install Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.2.4
 
-      # 6. Run the fmt check (fails if any file is mis-formatted)
       - name: Run terraform fmt -check
         run: |
-          # If no .tf files changed, skip
           if [[ -z "${TF_CHANGED// }" ]]; then
             echo "No Terraform files changed; skipping fmt check."
-            exit 0
+          else
+            terraform fmt -check $TF_CHANGED
           fi
 
-          # Check formatting on all changed .tf files at once
-          terraform fmt -check $TF_CHANGED
+      - name: Terraform init & validate
+        if: always()  # run regardless of fmt outcome
+        run: |
+          # Initialize only to validate — no remote backend needed
+          terraform init -backend=false
+          # This will fail if there are syntax errors or invalid blocks
+          terraform validate
