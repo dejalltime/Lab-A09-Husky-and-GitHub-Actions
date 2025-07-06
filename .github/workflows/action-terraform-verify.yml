@@ -18,6 +18,9 @@ jobs:
   fmt:
     name: Terraform fmt Check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
@@ -25,37 +28,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch changed files
-        id: pr_files
-        uses: jitterbit/get-changed-files@v1
-        with:
-          format: space-delimited
+      # List any changed .tf under infrastructure/, store in TF_CHANGED
+      - name: Determine changed Terraform files
+        id: diff
+        run: |
+          TF_CHANGED=$(git diff --name-only \
+            ${{ github.event.pull_request.base.sha }} \
+            ${{ github.event.pull_request.head.sha }} \
+            | grep '^infrastructure/.*\.tf$' || true)
+          echo "TF_CHANGED<<EOF" >> $GITHUB_ENV
+          echo "$TF_CHANGED" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Show files to be checked
+        run: |
+          echo ">>> Terraform files changed:"
+          echo "${{ env.TF_CHANGED }}"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.2.4
 
-      - name: Validate terraform fmt on changed files
+      - name: Run terraform fmt -check
         run: |
-          set +e
-          echo "CHECK_STATUS=0" >> $GITHUB_ENV
+          if [[ -z "${TF_CHANGED// }" ]]; then
+            echo "No Terraform files changed; skipping fmt check."
+            exit 0
+          fi
 
-          for changed_file in ${{ steps.pr_files.outputs.added_modified }}; do
-            # only check .tf files under infrastructure/
-            if [[ $changed_file == infrastructure/*.tf ]]; then
-              echo "🔍 Checking fmt: $changed_file"
-              terraform fmt -check "$changed_file"
-              if [[ $? -ne 0 ]]; then
-                echo "❌ terraform fmt failed - $changed_file" >> $GITHUB_STEP_SUMMARY
-                echo "CHECK_STATUS=1" >> $GITHUB_ENV
-              fi
-            fi
-          done
-
-      - name: Process fmt check result
-        if: always()
-        run: exit $CHECK_STATUS
+          echo "🔍 Checking formatting on changed Terraform files..."
+          terraform fmt -check $TF_CHANGED
 
   # -------------------------------------------------
   # Job 2: Init & Validate entire Terraform configuration
@@ -64,6 +67,9 @@ jobs:
     name: Terraform Init & Validate
     needs: fmt
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
