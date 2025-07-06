@@ -11,45 +11,48 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-
     steps:
-      # 1) Check out full history and the PR head ref
+      # 1. Checkout the full repo so we can diff
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
 
-      # 2) Grab the list of added/modified files via the jitterbit action
-      - name: Fetch changed files
-        id: pr_files
-        uses: jitterbit/get-changed-files@v1
-        with:
-          format: space-delimited
+      # 2. Fetch the PR base SHA so we can diff against it
+      - name: Fetch base commit
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.sha }}
 
-      # 3) Install Terraform
+      # 3. List the changed files between base and head
+      - name: List changed files
+        id: diff
+        run: |
+          echo "TF_CHANGED=$(git diff --name-only \
+            ${{ github.event.pull_request.base.sha }} \
+            ${{ github.event.pull_request.head.sha }} \
+            | grep '\.tf$' || true)" >> $GITHUB_ENV
+
+      # 4. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.2.4
 
-      # 4) Loop through only the .tf files and run fmt check
+      # 5. Run fmt check on each changed .tf file
       - name: Validate terraform fmt
         run: |
           set +e
-          echo "CHECK_STATUS=0" >> $GITHUB_ENV
+          echo "CHECK=0" >> $GITHUB_ENV
 
-          for file in ${{ steps.pr_files.outputs.added_modified }}; do
-            if [[ $file == *.tf ]]; then
-              echo "Checking fmt on $file"
-              terraform fmt -check "$file"
-              if [[ $? -ne 0 ]]; then
-                echo "❌ fmt failed on $file" >> $GITHUB_STEP_SUMMARY
-                echo "CHECK_STATUS=1" >> $GITHUB_ENV
-              fi
+          for file in ${{ env.TF_CHANGED }}; do
+            echo "Checking fmt on $file"
+            terraform fmt -check "$file"
+            if [[ $? -ne 0 ]]; then
+              echo "❌ fmt failed: $file" >> $GITHUB_STEP_SUMMARY
+              echo "CHECK=1" >> $GITHUB_ENV
             fi
           done
 
-      # 5) Fail the job if any fmt error was detected
+      # 6. Fail if any formatting errors occurred
       - name: Fail on fmt errors
-        if: env.CHECK_STATUS == '1'
+        if: env.CHECK == '1'
         run: exit 1
