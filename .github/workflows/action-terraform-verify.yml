@@ -1,4 +1,4 @@
-name: Validate terraform fmt
+name: Validate terraform fmt & syntax
 
 on:
   pull_request:
@@ -12,47 +12,31 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # always fail on any non-zero exit
+        shell: bash
+
     steps:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-
-      - name: Fetch base for diff
-        run: git fetch origin ${{ github.event.pull_request.base.sha }}
-
-      - name: Determine changed Terraform files
-        id: diff
-        run: |
-          TF_CHANGED=$(git diff --name-only \
-            ${{ github.event.pull_request.base.sha }} \
-            ${{ github.event.pull_request.head.sha }} \
-            | grep '\.tf$' || true)
-          echo "TF_CHANGED<<EOF" >> $GITHUB_ENV
-          echo "$TF_CHANGED" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Show changed .tf files
-        run: |
-          echo "Changed Terraform files:"
-          echo "${{ env.TF_CHANGED }}"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.2.4
 
-      - name: Run terraform fmt -check
+      # 1) Run fmt-check in the infra folder
+      - name: Terraform fmt -check
+        working-directory: infrastructure
         run: |
-          if [[ -z "${TF_CHANGED// }" ]]; then
-            echo "No Terraform files changed; skipping fmt check."
-          else
-            terraform fmt -check $TF_CHANGED
-          fi
+          # this step will fail if any .tf is badly formatted
+          terraform fmt -check .
 
+      # 2) Initialize & validate the full config in infra/
       - name: Terraform init & validate
-        if: always()  # run regardless of fmt outcome
+        working-directory: infrastructure
         run: |
-          # Initialize only to validate — no remote backend needed
           terraform init -backend=false
-          # This will fail if there are syntax errors or invalid blocks
           terraform validate
