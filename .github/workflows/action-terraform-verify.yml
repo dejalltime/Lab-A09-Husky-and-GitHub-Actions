@@ -1,45 +1,52 @@
+name: Validate terraform fmt
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    name: terraform fmt check
+    outputs:
+      CHECK_STATUS: "${{ env.CHECK_STATUS }}"
     steps:
       - uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-
-      # Fetch the PR base so we can diff
-      - name: Fetch base for diff
-        run: git fetch origin ${{ github.event.pull_request.base.sha }}
-
-      # Compute changed .tf files into TF_CHANGED (newline-separated)
-      - name: Determine changed Terraform files
-        id: diff
-        run: |
-          TF_CHANGED=$(git diff --name-only \
-            ${{ github.event.pull_request.base.sha }} \
-            ${{ github.event.pull_request.head.sha }} \
-            | grep '\.tf$' || true)
-          echo "TF_CHANGED<<EOF" >> $GITHUB_ENV
-          echo "$TF_CHANGED" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Show changed .tf files
-        run: |
-          echo ">>> Changed TF files:"
-          echo "${{ env.TF_CHANGED }}"
-
-      - name: Setup Terraform
+          fetch-depth: 2
+      - name: Fetch changed files
+        id: pr_files
+        uses: jitterbit/get-changed-files@v1
+        with:
+          format: "space-delimited"
+      - name: Configure terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.2.4
-
-      - name: Run terraform fmt -check
+      - name: Validate terraform fmt (added_modified)
         run: |
-          if [[ -z "${TF_CHANGED// }" ]]; then
-            echo "No Terraform files changed; skipping fmt check."
-            exit 0
-          fi
+          set +e
 
-          # Run fmt check on all changed files at once
-          terraform fmt -check $TF_CHANGED
+          echo "CHECK_STATUS=0" >> $GITHUB_ENV
 
-        # If any file is unformatted, `terraform fmt -check` returns non-zero and this step fails
+          for changed_file in ${{ steps.pr_files.outputs.added_modified }}; do
+            echo "Checking terraform fmt on ${changed_file}..."
+
+            if [[ $changed_file == *.tf ]]; then
+              terraform fmt -check $changed_file
+              FMT_STATUS=$(echo $?)
+
+              if [[ $FMT_STATUS -ne 0 ]]; then
+                echo "❌ terraform fmt failed - ${changed_file}" >> $GITHUB_STEP_SUMMARY
+                echo "CHECK_STATUS=1" >> $GITHUB_ENV
+              fi
+            fi
+          done
+      - name: Process check
+        if: always()
+        run: exit $CHECK_STATUS
