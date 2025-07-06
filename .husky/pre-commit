@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname "$0")/_/husky.sh"
+
+echo "Checking Terraform formatting…"
+terraform fmt -check -recursive infrastructure/
+
+echo "Validating Terraform configuration…"
+terraform validate
+
+echo "Linting Terraform with tflint…"
+tflint
